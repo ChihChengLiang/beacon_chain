@@ -1,50 +1,102 @@
 import hash_ssz
 from beacon_chain.state import crystallized_state as cs
-from ssz import ssz
+from old_ssz import ssz
 import time
-from hashlib import blake2s
+from eth_hash.auto import (
+    keccak,
+)
+from ssz import encode
+from ssz.sedes import Serializable, List, uint32, uint64, uint24, uint384, hash32
+from ssz.tree_hash.tree_hash import hash_tree_root
+
 
 def hash(x):
-    return blake2s(x).digest()[:32]
+    return keccak(x)
 
-v = cs.ValidatorRecord(pubkey=3**160, withdrawal_shard=567, withdrawal_address=b'\x35' * 20, randao_commitment=b'\x57' * 20, balance=32 * 10**18, start_dynasty=7, end_dynasty=17284)
-c = cs.CrosslinkRecord(dynasty=4, slot=12847, hash=b'\x67' * 32)
+
+class ValidatorRecord(Serializable):
+    fields = [
+        ('pubkey', uint384),
+        ('withdrawal_credentials', hash32),
+        ('randao_commitment', hash32),
+        ('randao_layers', uint64),
+        ('status', uint64),
+        ('latest_status_change_slot', uint64),
+        ('exit_count', uint64),
+        ('poc_commitment', hash32),
+        ('last_poc_change_slot', uint64),
+        ('second_last_poc_change_slot', uint64),
+    ]
+
+
+class CrosslinkRecord(Serializable):
+    fields = [
+
+        ('slot', uint64),
+        ('shard_block_root', hash32),
+    ]
+
+
+class ShardCommittee(Serializable):
+    fields = [
+        ('shard', uint64),
+        ('committee', List(uint24)),
+        ('total_validator_count', uint64),
+    ]
+
+
+class State(Serializable):
+    fields = [
+        ('validator_registry', List(ValidatorRecord)),
+        ('shard_and_committee_for_slots', List(List(ShardCommittee))),
+        ('latest_crosslinks', List(CrosslinkRecord)),
+    ]
+
+
+v = ValidatorRecord(
+    pubkey=123,
+    withdrawal_credentials=b'\x56'*32,
+    randao_commitment=b'\x56'*32,
+    randao_layers=123,
+    status=123,
+    latest_status_change_slot=123,
+    exit_count=123,
+    poc_commitment=b'\x56'*32,
+    last_poc_change_slot=123,
+    second_last_poc_change_slot=123,
+)
+c = CrosslinkRecord(slot=12847, shard_block_root=b'\x67' * 32)
 cr_stubs = [c for i in range(1024)]
 
-def make_crystallized_state(valcount):
-    sc_stub = cs.ShardAndCommittee(shard_id=1, committee=list(range(valcount // 1024)))
+
+def make_state(valcount):
+    sc_stub = ShardCommittee(
+        shard=1, committee=list(range(valcount // 1024)),
+        total_validator_count=valcount,
+    )
     sc_stubs = [[sc_stub for i in range(16)] for i in range(64)]
-    c = cs.CrystallizedState(
-        validators=[v for i in range(valcount)],
-        last_state_recalc=1,
+    c = State(
+        validator_registry=[v for i in range(valcount)],
         shard_and_committee_for_slots=sc_stubs,
-        last_justified_slot=12744,
-        justified_streak=98,
-        last_finalized_slot=1724,
-        current_dynasty=19824,
-        crosslink_records = cr_stubs,
-        dynasty_seed=b'\x98' * 32,
-        dynasty_start=124
+        latest_crosslinks=cr_stubs,
     )
     return c
 
+
 def time_test(valcount):
-    c = make_crystallized_state(valcount)
+    c = make_state(valcount)
     a = time.time()
     h = hash_ssz.hash_ssz(c)
-    return(time.time() - a)
+    print("Old hash_ssz:", time.time() - a)
 
-def encoded_length(valcount):
-    c = make_crystallized_state(valcount)
-    return len(ssz.serialize(c))
 
-def hash_time_test(valcount):
-    c = make_crystallized_state(valcount)
+def time_test_pyssz(valcount):
+    c = make_state(valcount)
     a = time.time()
-    s = ssz.serialize(c)
-    a2 = time.time()
-    h = hash(s)
-    return(a2 - a, time.time() - a2)
+    s = hash_tree_root(c)
+    print("New hash_tree_root",  time.time() - a)
+
 
 if __name__ == '__main__':
-    print(time_test(2**18))
+    time_test(2**18)
+    time_test_pyssz(2**18)

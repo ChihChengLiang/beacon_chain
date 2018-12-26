@@ -1,9 +1,11 @@
-from hashlib import blake2s
+from eth_hash.auto import (
+    keccak,
+)
 from beacon_chain.state import crystallized_state as cs
+from ssz.sedes import Serializable, List
 
-
-def hash(x):
-    return blake2s(x).digest()[:32]
+def hash_eth2(x):
+    return keccak(x)
 
 
 CHUNKSIZE = 128
@@ -22,7 +24,8 @@ def merkle_hash(lst):
         items_per_chunk = CHUNKSIZE // len(lst[0])
 
         # Build a list of chunks based on the number of items in the chunk
-        chunkz = [b''.join(lst[i:i+items_per_chunk]) for i in range(0, len(lst), items_per_chunk)]
+        chunkz = [b''.join(lst[i:i+items_per_chunk])
+                  for i in range(0, len(lst), items_per_chunk)]
     else:
         # Leave large items alone
         chunkz = lst
@@ -31,14 +34,15 @@ def merkle_hash(lst):
     while len(chunkz) > 1:
         if len(chunkz) % 2 == 1:
             chunkz.append(b'\x00' * CHUNKSIZE)
-        chunkz = [hash(chunkz[i] + chunkz[i+1]) for i in range(0, len(chunkz), 2)]
+        chunkz = [hash_eth2(chunkz[i] + chunkz[i+1])
+                  for i in range(0, len(chunkz), 2)]
 
     # Return hash of root and length data
-    return hash(chunkz[0] + datalen)
+    return hash_eth2(chunkz[0] + datalen)
 
 
 def hash_ssz(val, typ=None):
-    if typ is None and hasattr(val, 'fields'):
+    if typ is None and hasattr(val, '_meta'):
         typ = type(val)
     if typ in ('hash32', 'address'):
         assert len(val) == 20 if typ == 'address' else 32
@@ -53,32 +57,48 @@ def hash_ssz(val, typ=None):
         assert val >= 0
         return val.to_bytes(length // 8, 'big')
     elif typ == 'bytes':
-        return hash(val)
+        return hash_eth2(val)
     elif isinstance(typ, list):
         assert len(typ) == 1
         return merkle_hash([hash_ssz(x, typ[0]) for x in val])
-    elif isinstance(typ, type):
+    elif isinstance(typ, List):
+        return merkle_hash([hash_ssz(x, typ.element_sedes) for x in val])
+    elif isinstance(val, Serializable):
         # NOTE: it's for test
-        if typ == cs.ValidatorRecord:
+        if typ.__name__ == 'ValidatorRecord':
             return hash_validator_record(val)
-        elif typ == cs.ShardAndCommittee:
+        if typ.__name__ =='CrosslinkRecord':
+            return hash_crosslink_record(val)
+        elif typ.__name__ == 'ShardCommittee':
             return hash_shard_and_committee(val)
         else:
             sub = b''.join(
-                [hash_ssz(getattr(val, k), typ.fields[k]) for k in sorted(typ.fields.keys())]
+                [hash_ssz(val[field_name], field_sedes)
+                 for field_name, field_sedes in typ._meta.fields]
             )
-            return hash(sub)
-    raise Exception("Cannot serialize", val, typ)
+            return hash_eth2(sub)
+    raise Exception("Cannot serialize",val, typ)
 
+def hash_crosslink_record(val):
+    return hash_eth2(
+        val.slot.to_bytes(8, 'big') + val.shard_block_root
+    )
 
 def hash_validator_record(val):
-    return hash(
-        val.pubkey.to_bytes(32, 'big') + val.withdrawal_shard.to_bytes(2, 'big') +
-        val.withdrawal_address + val.randao_commitment + val.balance.to_bytes(16, 'big') +
-        val.start_dynasty.to_bytes(8, 'big') + val.end_dynasty.to_bytes(8, 'big')
+    return hash_eth2(
+        val.pubkey.to_bytes(48, 'big') +
+        val.withdrawal_credentials +
+        val.randao_commitment +
+        val.randao_layers.to_bytes(8, 'big') +
+        val.status.to_bytes(8, 'big') +
+        val.latest_status_change_slot.to_bytes(8, 'big') +
+        val.exit_count.to_bytes(8, 'big') +
+        val.poc_commitment +
+        val.last_poc_change_slot.to_bytes(8, 'big') +
+        val.second_last_poc_change_slot.to_bytes(8, 'big')
     )
 
 
 def hash_shard_and_committee(val):
     committee = merkle_hash([x.to_bytes(3, 'big') for x in val.committee])
-    return hash(val.shard_id.to_bytes(2, 'big') + committee)
+    return hash_eth2(val.shard.to_bytes(8, 'big') + committee)

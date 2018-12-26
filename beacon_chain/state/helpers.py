@@ -11,7 +11,7 @@ from beacon_chain.beacon_typing.custom import (
     ShardId,
 )
 
-from ssz import (
+from old_ssz import (
     serialize,
 )
 
