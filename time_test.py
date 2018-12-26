@@ -88,15 +88,18 @@ def time_test(valcount):
     a = time.time()
     h = hash_ssz.hash_ssz(c)
     print("Old hash_ssz:", time.time() - a)
+    print(h)
 
 
 def time_test_pyssz(valcount):
     c = make_state(valcount)
     a = time.time()
-    s = hash_tree_root(c)
+    h = hash_tree_root(c)
     print("New hash_tree_root",  time.time() - a)
+    print(h)
 
 
 if __name__ == '__main__':
-    time_test(2**18)
-    time_test_pyssz(2**18)
+    validator_size = 2**18
+    time_test(validator_size)
+    time_test_pyssz(validator_size)

@@ -2,7 +2,7 @@ from eth_hash.auto import (
     keccak,
 )
 from beacon_chain.state import crystallized_state as cs
-from ssz.sedes import Serializable, List
+from ssz.sedes import Serializable, List, UnsignedInteger, Hash
 
 def hash_eth2(x):
     return keccak(x)
@@ -56,6 +56,13 @@ def hash_ssz(val, typ=None):
         assert length % 8 == 0
         assert val >= 0
         return val.to_bytes(length // 8, 'big')
+    elif isinstance(typ, UnsignedInteger):
+        b = val.to_bytes(typ.num_bytes, 'big')
+        if typ.num_bytes > 32:
+            return hash_eth2(b)
+        return b
+    elif isinstance(typ, Hash):
+        return val
     elif typ == 'bytes':
         return hash_eth2(val)
     elif isinstance(typ, list):
@@ -64,41 +71,9 @@ def hash_ssz(val, typ=None):
     elif isinstance(typ, List):
         return merkle_hash([hash_ssz(x, typ.element_sedes) for x in val])
     elif isinstance(val, Serializable):
-        # NOTE: it's for test
-        if typ.__name__ == 'ValidatorRecord':
-            return hash_validator_record(val)
-        if typ.__name__ =='CrosslinkRecord':
-            return hash_crosslink_record(val)
-        elif typ.__name__ == 'ShardCommittee':
-            return hash_shard_and_committee(val)
-        else:
-            sub = b''.join(
-                [hash_ssz(val[field_name], field_sedes)
-                 for field_name, field_sedes in typ._meta.fields]
-            )
-            return hash_eth2(sub)
+        sub = b''.join(
+            [hash_ssz(val[field_name], field_sedes)
+                for field_name, field_sedes in typ._meta.fields]
+        )
+        return hash_eth2(sub)
     raise Exception("Cannot serialize",val, typ)
-
-def hash_crosslink_record(val):
-    return hash_eth2(
-        val.slot.to_bytes(8, 'big') + val.shard_block_root
-    )
-
-def hash_validator_record(val):
-    return hash_eth2(
-        val.pubkey.to_bytes(48, 'big') +
-        val.withdrawal_credentials +
-        val.randao_commitment +
-        val.randao_layers.to_bytes(8, 'big') +
-        val.status.to_bytes(8, 'big') +
-        val.latest_status_change_slot.to_bytes(8, 'big') +
-        val.exit_count.to_bytes(8, 'big') +
-        val.poc_commitment +
-        val.last_poc_change_slot.to_bytes(8, 'big') +
-        val.second_last_poc_change_slot.to_bytes(8, 'big')
-    )
-
-
-def hash_shard_and_committee(val):
-    committee = merkle_hash([x.to_bytes(3, 'big') for x in val.committee])
-    return hash_eth2(val.shard.to_bytes(8, 'big') + committee)
